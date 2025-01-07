@@ -18,7 +18,6 @@
 use super::block::{bm25_max_free_space, BM25PageSpecialData, LinkedList, LinkedListData};
 use crate::postgres::storage::buffer::{BufferManager, PageHeaderMethods};
 use crate::postgres::storage::SKIPLIST_FREQ;
-use crate::postgres::NeedWal;
 use anyhow::Result;
 use parking_lot::Mutex;
 use pgrx::pg_sys;
@@ -139,12 +138,8 @@ impl Deref for RangeData {
 }
 
 impl LinkedBytesList {
-    pub fn open(
-        relation_oid: pg_sys::Oid,
-        header_blockno: pg_sys::BlockNumber,
-        need_wal: NeedWal,
-    ) -> Self {
-        let bman = BufferManager::new(relation_oid, need_wal);
+    pub fn open(relation_oid: pg_sys::Oid, header_blockno: pg_sys::BlockNumber) -> Self {
+        let bman = BufferManager::new(relation_oid);
         let metadata = bman
             .get_buffer(header_blockno)
             .page_contents::<LinkedListData>();
@@ -157,8 +152,8 @@ impl LinkedBytesList {
         }
     }
 
-    pub unsafe fn create(relation_oid: pg_sys::Oid, need_wal: NeedWal) -> Self {
-        let mut bman = BufferManager::new(relation_oid, need_wal);
+    pub unsafe fn create(relation_oid: pg_sys::Oid) -> Self {
+        let mut bman = BufferManager::new(relation_oid);
 
         let mut header_buffer = bman.new_buffer();
         let header_blockno = header_buffer.number();
@@ -372,7 +367,7 @@ mod tests {
         // Test read/write from newly created linked list
         let bytes: Vec<u8> = (1..=255).cycle().take(100_000).collect();
         let start_blockno = {
-            let mut linked_list = LinkedBytesList::create(relation_oid, true);
+            let mut linked_list = LinkedBytesList::create(relation_oid);
             linked_list.write(&bytes).unwrap();
             let read_bytes = linked_list.read_all();
             assert_eq!(bytes, read_bytes);
@@ -381,7 +376,7 @@ mod tests {
         };
 
         // Test read from already created linked list
-        let linked_list = LinkedBytesList::open(relation_oid, start_blockno, true);
+        let linked_list = LinkedBytesList::open(relation_oid, start_blockno);
         let read_bytes = linked_list.read_all();
         assert_eq!(bytes, read_bytes);
     }
@@ -395,7 +390,7 @@ mod tests {
                 .expect("spi should succeed")
                 .unwrap();
 
-        let mut linked_list = LinkedBytesList::create(relation_oid, true);
+        let mut linked_list = LinkedBytesList::create(relation_oid);
         assert!(linked_list.is_empty());
 
         let bytes: Vec<u8> = (1..=255).cycle().take(100_000).collect();
@@ -412,7 +407,7 @@ mod tests {
                 .expect("spi should succeed")
                 .unwrap();
 
-        let mut linked_list = LinkedBytesList::create(relation_oid, true);
+        let mut linked_list = LinkedBytesList::create(relation_oid);
         let bytes: Vec<u8> = (1..=255).cycle().take(100_000).collect();
         linked_list.write(&bytes).unwrap();
         linked_list.mark_deleted();

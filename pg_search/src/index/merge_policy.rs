@@ -1,6 +1,5 @@
 use crate::postgres::storage::block::{MergeLockData, MERGE_LOCK};
 use crate::postgres::storage::buffer::{BufferManager, BufferMut};
-use crate::postgres::NeedWal;
 use pgrx::pg_sys;
 use tantivy::indexer::{MergeCandidate, MergePolicy};
 use tantivy::merge_policy::NoMergePolicy;
@@ -73,12 +72,12 @@ impl MergeLock {
     // This lock is acquired by inserts if merge_on_insert is true
     // Merges should only happen if there is no other merge in progress
     // AND the effects of the previous merge are visible
-    pub unsafe fn acquire_for_merge(relation_oid: pg_sys::Oid, need_wal: NeedWal) -> Option<Self> {
+    pub unsafe fn acquire_for_merge(relation_oid: pg_sys::Oid) -> Option<Self> {
         if !pg_sys::IsTransactionState() {
             return None;
         }
 
-        let mut bman = BufferManager::new(relation_oid, need_wal);
+        let mut bman = BufferManager::new(relation_oid);
 
         if let Some(mut merge_lock) = bman.get_buffer_conditional(MERGE_LOCK) {
             let mut page = merge_lock.page_mut();
@@ -99,8 +98,8 @@ impl MergeLock {
 
     // This lock must be acquired before ambulkdelete calls commit() on the index
     // We ask for an exclusive lock because ambulkdelete must delete all dead ctids
-    pub unsafe fn acquire_for_delete(relation_oid: pg_sys::Oid, need_wal: NeedWal) -> Self {
-        let mut bman = BufferManager::new(relation_oid, need_wal);
+    pub unsafe fn acquire_for_delete(relation_oid: pg_sys::Oid) -> Self {
+        let mut bman = BufferManager::new(relation_oid);
         let merge_lock = bman.get_buffer_mut(MERGE_LOCK);
         MergeLock(merge_lock)
     }

@@ -18,7 +18,6 @@
 use super::block::{BM25PageSpecialData, LinkedList, LinkedListData, MVCCEntry, PgItem};
 use super::buffer::{BufferManager, BufferMut};
 use super::utils::vacuum_get_freeze_limit;
-use crate::postgres::NeedWal;
 use anyhow::Result;
 use pgrx::pg_sys;
 use std::fmt::Debug;
@@ -77,15 +76,11 @@ impl<T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry> LinkedList for 
 }
 
 impl<T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry> LinkedItemList<T> {
-    pub fn open(
-        relation_oid: pg_sys::Oid,
-        header_blockno: pg_sys::BlockNumber,
-        need_wal: NeedWal,
-    ) -> Self {
+    pub fn open(relation_oid: pg_sys::Oid, header_blockno: pg_sys::BlockNumber) -> Self {
         Self {
             relation_oid,
             header_blockno,
-            bman: BufferManager::new(relation_oid, need_wal),
+            bman: BufferManager::new(relation_oid),
             _marker: std::marker::PhantomData,
         }
     }
@@ -98,8 +93,8 @@ impl<T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry> LinkedItemList<
         &mut self.bman
     }
 
-    pub unsafe fn create(relation_oid: pg_sys::Oid, need_wal: NeedWal) -> Self {
-        let mut bman = BufferManager::new(relation_oid, need_wal);
+    pub unsafe fn create(relation_oid: pg_sys::Oid) -> Self {
+        let mut bman = BufferManager::new(relation_oid);
 
         let mut header_buffer = bman.new_buffer();
         let header_blockno = header_buffer.number();
@@ -340,7 +335,7 @@ mod tests {
             }
         };
 
-        let mut list = LinkedItemList::<SegmentMetaEntry>::create(relation_oid, true);
+        let mut list = LinkedItemList::<SegmentMetaEntry>::create(relation_oid);
         let entries_to_delete = vec![SegmentMetaEntry {
             segment_id: random_segment_id(),
             xmin: delete_xid,
@@ -392,7 +387,7 @@ mod tests {
 
         // Add 2000 entries, delete every 10th entry
         {
-            let mut list = LinkedItemList::<SegmentMetaEntry>::create(relation_oid, true);
+            let mut list = LinkedItemList::<SegmentMetaEntry>::create(relation_oid);
             let entries = (1..2000)
                 .map(|i| SegmentMetaEntry {
                     segment_id: random_segment_id(),
@@ -419,7 +414,7 @@ mod tests {
         }
         // First n pages are full, next m pages need to be compacted, next n are full
         {
-            let mut list = LinkedItemList::<SegmentMetaEntry>::create(relation_oid, true);
+            let mut list = LinkedItemList::<SegmentMetaEntry>::create(relation_oid);
             let entries_1 = (1..500)
                 .map(|_| SegmentMetaEntry {
                     segment_id: random_segment_id(),

@@ -21,7 +21,6 @@ use crate::index::merge_policy::AllowedMergePolicy;
 use crate::index::mvcc::MVCCDirectory;
 use crate::postgres::index::get_fields;
 use crate::postgres::options::SearchIndexCreateOptions;
-use crate::postgres::NeedWal;
 use crate::schema::{SearchFieldConfig, SearchIndexSchema};
 use anyhow::Result;
 use crossbeam::channel::Receiver;
@@ -39,13 +38,7 @@ pub enum WriterResources {
 pub type Parallelism = NonZeroUsize;
 pub type MemoryBudget = usize;
 pub type DoMerging = bool;
-pub type IndexConfig = (
-    Parallelism,
-    MemoryBudget,
-    DoMerging,
-    AllowedMergePolicy,
-    NeedWal,
-);
+pub type IndexConfig = (Parallelism, MemoryBudget, DoMerging, AllowedMergePolicy);
 
 pub enum BlockDirectoryType {
     Mvcc,
@@ -53,10 +46,10 @@ pub enum BlockDirectoryType {
 }
 
 impl BlockDirectoryType {
-    pub fn directory(self, index_relation: &PgRelation, need_wal: NeedWal) -> MVCCDirectory {
+    pub fn directory(self, index_relation: &PgRelation) -> MVCCDirectory {
         match self {
-            BlockDirectoryType::Mvcc => MVCCDirectory::snapshot(index_relation.oid(), need_wal),
-            BlockDirectoryType::BulkDelete => MVCCDirectory::any(index_relation.oid(), need_wal),
+            BlockDirectoryType::Mvcc => MVCCDirectory::snapshot(index_relation.oid()),
+            BlockDirectoryType::BulkDelete => MVCCDirectory::any(index_relation.oid()),
         }
     }
 
@@ -64,10 +57,9 @@ impl BlockDirectoryType {
         self,
         index_relation: &PgRelation,
         receiver: Receiver<ChannelRequest>,
-        need_wal: NeedWal,
     ) -> ChannelRequestHandler {
         ChannelRequestHandler::open(
-            self.directory(index_relation, need_wal),
+            self.directory(index_relation),
             index_relation.oid(),
             receiver,
         )
@@ -91,7 +83,6 @@ impl WriterResources {
                     gucs::create_index_memory_budget(),
                     true, // we always want a merge on CREATE INDEX
                     AllowedMergePolicy::NPlusOne(target_segment_count),
-                    false,
                 )
             }
             WriterResources::Statement => {
@@ -105,7 +96,6 @@ impl WriterResources {
                     gucs::statement_memory_budget(),
                     merge_on_insert, // user/index decides if we merge for INSERT/UPDATE statements
                     policy,
-                    false,
                 )
             }
             WriterResources::Vacuum => {
@@ -114,7 +104,6 @@ impl WriterResources {
                     gucs::statement_memory_budget(),
                     true, // we always want a merge on (auto)VACUUM
                     AllowedMergePolicy::NPlusOne(target_segment_count),
-                    false,
                 )
             }
         }

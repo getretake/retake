@@ -1,30 +1,7 @@
 use crate::postgres::storage::block::{BM25PageSpecialData, PgItem};
 use crate::postgres::storage::utils::{BM25BufferCache, BM25Page};
-use crate::postgres::NeedWal;
 use pgrx::pg_sys;
-use std::ptr::NonNull;
 use std::sync::Arc;
-
-#[derive(Debug, Copy, Clone, Default)]
-#[repr(i32)]
-enum XlogFlag {
-    #[default]
-    ExistingBuffer = 0,
-    NewBuffer = pg_sys::GENERIC_XLOG_FULL_IMAGE as i32,
-}
-#[derive(Copy, Clone, Default)]
-enum XlogStyle {
-    #[default]
-    Unlogged,
-    #[allow(dead_code)]
-    Logged(NonNull<pg_sys::GenericXLogState>, XlogFlag),
-}
-
-impl XlogStyle {
-    fn get_page(&self, buffer: pg_sys::Buffer) -> pg_sys::Page {
-        unsafe { pg_sys::BufferGetPage(buffer) }
-    }
-}
 
 pub struct Buffer {
     pg_buffer: pg_sys::Buffer,
@@ -63,7 +40,6 @@ impl Buffer {
 }
 
 pub struct BufferMut {
-    style: XlogStyle,
     dirty: bool,
     inner: Buffer,
 }
@@ -104,7 +80,7 @@ impl BufferMut {
     }
 
     pub fn page_mut(&mut self) -> PageMut {
-        let pg_page = self.style.get_page(self.inner.pg_buffer);
+        let pg_page = unsafe { pg_sys::BufferGetPage(self.inner.pg_buffer) };
         PageMut {
             buffer: self,
             pg_page,
@@ -353,14 +329,12 @@ impl PageHeaderMethods for pg_sys::PageHeaderData {
 
 #[derive(Clone, Debug)]
 pub struct BufferManager {
-    logged: bool,
     bcache: Arc<BM25BufferCache>,
 }
 
 impl BufferManager {
-    pub fn new(indexrelid: pg_sys::Oid, need_wal: NeedWal) -> Self {
+    pub fn new(indexrelid: pg_sys::Oid) -> Self {
         Self {
-            logged: need_wal,
             bcache: BM25BufferCache::open(indexrelid),
         }
     }
@@ -369,19 +343,10 @@ impl BufferManager {
         &self.bcache
     }
 
-    fn style(&self, flag: XlogFlag) -> XlogStyle {
-        if self.logged {
-            unsafe { XlogStyle::Logged(NonNull::new_unchecked(self.bcache.start_xlog()), flag) }
-        } else {
-            XlogStyle::Unlogged
-        }
-    }
-
     #[must_use]
     pub fn new_buffer(&mut self) -> BufferMut {
         unsafe {
             BufferMut {
-                style: self.style(XlogFlag::NewBuffer),
                 dirty: false,
                 inner: Buffer {
                     pg_buffer: self.bcache.new_buffer(),
@@ -403,7 +368,6 @@ impl BufferManager {
     pub fn get_buffer_mut(&mut self, blockno: pg_sys::BlockNumber) -> BufferMut {
         unsafe {
             BufferMut {
-                style: self.style(XlogFlag::ExistingBuffer),
                 dirty: false,
                 inner: Buffer {
                     pg_buffer: self
@@ -419,7 +383,6 @@ impl BufferManager {
             let pg_buffer = self.bcache.get_buffer(blockno, None);
             if pg_sys::ConditionalLockBuffer(pg_buffer) {
                 Some(BufferMut {
-                    style: self.style(XlogFlag::ExistingBuffer),
                     dirty: false,
                     inner: Buffer { pg_buffer },
                 })
@@ -441,7 +404,6 @@ impl BufferManager {
                 .get_buffer_with_strategy(blockno, strategy, None);
             pg_sys::LockBufferForCleanup(buffer);
             BufferMut {
-                style: self.style(XlogFlag::ExistingBuffer),
                 dirty: false,
                 inner: Buffer { pg_buffer: buffer },
             }

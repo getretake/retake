@@ -1,7 +1,6 @@
 use crate::postgres::storage::block::{bm25_max_free_space, FileEntry, LinkedList};
 use crate::postgres::storage::linked_bytes::RangeData;
 use crate::postgres::storage::LinkedBytesList;
-use crate::postgres::NeedWal;
 use anyhow::Result;
 use parking_lot::Mutex;
 use pgrx::*;
@@ -23,8 +22,8 @@ pub struct SegmentComponentReader {
 }
 
 impl SegmentComponentReader {
-    pub unsafe fn new(relation_oid: pg_sys::Oid, entry: FileEntry, need_wal: NeedWal) -> Self {
-        let block_list = LinkedBytesList::open(relation_oid, entry.staring_block, need_wal);
+    pub unsafe fn new(relation_oid: pg_sys::Oid, entry: FileEntry) -> Self {
+        let block_list = LinkedBytesList::open(relation_oid, entry.staring_block);
 
         Self {
             block_list,
@@ -135,12 +134,12 @@ mod tests {
         let segment = format!("{}.term", uuid::Uuid::new_v4());
         let path = Path::new(segment.as_str());
 
-        let mut writer = unsafe { SegmentComponentWriter::new(relation_oid, path, false) };
+        let mut writer = unsafe { SegmentComponentWriter::new(relation_oid, path) };
         writer.write_all(&bytes).unwrap();
         let file_entry = writer.file_entry();
         writer.terminate().unwrap();
 
-        let reader = SegmentComponentReader::new(relation_oid, file_entry, false);
+        let reader = SegmentComponentReader::new(relation_oid, file_entry);
 
         assert_eq!(reader.len(), 100_000);
         assert_eq!(

@@ -369,7 +369,7 @@ fn storage_info(
     index: PgRelation,
 ) -> TableIterator<'static, (name!(block, i64), name!(max_offset, i32))> {
     let segment_components =
-        LinkedItemList::<SegmentMetaEntry>::open(index.oid(), SEGMENT_METAS_START, false);
+        LinkedItemList::<SegmentMetaEntry>::open(index.oid(), SEGMENT_METAS_START);
     let bman = segment_components.bman();
     let mut blockno = segment_components.get_start_blockno();
     let mut data = vec![];
@@ -403,7 +403,7 @@ fn page_info(
     >,
 > {
     let segment_components =
-        LinkedItemList::<SegmentMetaEntry>::open(index.oid(), SEGMENT_METAS_START, false);
+        LinkedItemList::<SegmentMetaEntry>::open(index.oid(), SEGMENT_METAS_START);
     let bman = segment_components.bman();
     let buffer = bman.get_buffer(blockno as pg_sys::BlockNumber);
     let page = buffer.page();

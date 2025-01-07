@@ -21,7 +21,6 @@ use crate::postgres::storage::block::{
     FileEntry, SegmentFileDetails, SegmentMetaEntry, SEGMENT_METAS_START,
 };
 use crate::postgres::storage::LinkedItemList;
-use crate::postgres::NeedWal;
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use pgrx::pg_sys;
@@ -50,7 +49,6 @@ pub enum MvccSatisfies {
 pub struct MVCCDirectory {
     relation_oid: pg_sys::Oid,
     mvcc_style: MvccSatisfies,
-    need_wal: NeedWal,
 
     // keep a cache of readers behind an Arc<Mutex<_>> so that if/when this MVCCDirectory is
     // cloned, we don't lose all the work we did originally creating the FileHandler impls.  And
@@ -59,34 +57,25 @@ pub struct MVCCDirectory {
 }
 
 impl MVCCDirectory {
-    pub fn snapshot(relation_oid: pg_sys::Oid, need_wal: NeedWal) -> Self {
+    pub fn snapshot(relation_oid: pg_sys::Oid) -> Self {
         Self {
             relation_oid,
-            need_wal,
             mvcc_style: MvccSatisfies::Snapshot,
             readers: Arc::new(Mutex::new(FxHashMap::default())),
         }
     }
 
-    pub fn any(relation_oid: pg_sys::Oid, need_wal: NeedWal) -> Self {
+    pub fn any(relation_oid: pg_sys::Oid) -> Self {
         Self {
             relation_oid,
-            need_wal,
             mvcc_style: MvccSatisfies::Any,
             readers: Arc::new(Mutex::new(FxHashMap::default())),
         }
     }
 
-    pub fn need_wal(&self) -> NeedWal {
-        self.need_wal
-    }
-
     pub unsafe fn directory_lookup(&self, path: &Path) -> Result<FileEntry> {
-        let directory = LinkedItemList::<SegmentMetaEntry>::open(
-            self.relation_oid,
-            SEGMENT_METAS_START,
-            self.need_wal,
-        );
+        let directory =
+            LinkedItemList::<SegmentMetaEntry>::open(self.relation_oid, SEGMENT_METAS_START);
 
         let segment_id = path.segment_id().expect("path should have a segment_id");
 
@@ -123,7 +112,7 @@ impl Directory for MVCCDirectory {
                 };
                 Ok(vacant
                     .insert(Arc::new(unsafe {
-                        SegmentComponentReader::new(self.relation_oid, file_entry, self.need_wal)
+                        SegmentComponentReader::new(self.relation_oid, file_entry)
                     }))
                     .clone())
             }
@@ -210,10 +199,10 @@ impl Directory for MVCCDirectory {
             .expect("save_metas should have a payload");
 
         // Save Schema and IndexSettings if this is the first time
-        save_schema(self.relation_oid, &meta.schema, self.need_wal)
+        save_schema(self.relation_oid, &meta.schema)
             .map_err(|err| tantivy::TantivyError::SchemaError(err.to_string()))?;
 
-        save_settings(self.relation_oid, &meta.index_settings, self.need_wal)
+        save_settings(self.relation_oid, &meta.index_settings)
             .map_err(|err| tantivy::TantivyError::InternalError(err.to_string()))?;
 
         // If there were no new segments, skip the rest of the work
@@ -222,14 +211,8 @@ impl Directory for MVCCDirectory {
         }
 
         unsafe {
-            save_new_metas(
-                self.relation_oid,
-                meta,
-                previous_meta,
-                payload,
-                self.need_wal,
-            )
-            .map_err(|err| tantivy::TantivyError::InternalError(err.to_string()))?;
+            save_new_metas(self.relation_oid, meta, previous_meta, payload)
+                .map_err(|err| tantivy::TantivyError::InternalError(err.to_string()))?;
         }
 
         Ok(())
@@ -263,7 +246,7 @@ mod tests {
                 .expect("spi should succeed")
                 .unwrap();
 
-        let directory = MVCCDirectory::snapshot(relation_oid, true);
+        let directory = MVCCDirectory::snapshot(relation_oid);
         let listed_files = directory.list_managed_files().unwrap();
         assert_eq!(listed_files.len(), 6);
     }

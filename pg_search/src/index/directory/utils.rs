@@ -4,7 +4,6 @@ use crate::postgres::storage::block::{
     SCHEMA_START, SEGMENT_METAS_START, SETTINGS_START,
 };
 use crate::postgres::storage::{LinkedBytesList, LinkedItemList};
-use crate::postgres::NeedWal;
 use anyhow::Result;
 use pgrx::pg_sys;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -21,7 +20,7 @@ use tantivy::{
 
 pub unsafe fn list_managed_files(relation_oid: pg_sys::Oid) -> tantivy::Result<HashSet<PathBuf>> {
     let segment_components =
-        LinkedItemList::<SegmentMetaEntry>::open(relation_oid, SEGMENT_METAS_START, false);
+        LinkedItemList::<SegmentMetaEntry>::open(relation_oid, SEGMENT_METAS_START);
     let bman = segment_components.bman();
     let mut blockno = segment_components.get_start_blockno();
     let mut files = HashSet::new();
@@ -45,12 +44,8 @@ pub unsafe fn list_managed_files(relation_oid: pg_sys::Oid) -> tantivy::Result<H
     Ok(files)
 }
 
-pub fn save_schema(
-    relation_oid: pg_sys::Oid,
-    tantivy_schema: &Schema,
-    need_wal: NeedWal,
-) -> Result<()> {
-    let mut schema = LinkedBytesList::open(relation_oid, SCHEMA_START, need_wal);
+pub fn save_schema(relation_oid: pg_sys::Oid, tantivy_schema: &Schema) -> Result<()> {
+    let mut schema = LinkedBytesList::open(relation_oid, SCHEMA_START);
     if schema.is_empty() {
         let bytes = serde_json::to_vec(tantivy_schema)?;
         unsafe {
@@ -60,12 +55,8 @@ pub fn save_schema(
     Ok(())
 }
 
-pub fn save_settings(
-    relation_oid: pg_sys::Oid,
-    tantivy_settings: &IndexSettings,
-    need_wal: NeedWal,
-) -> Result<()> {
-    let mut settings = LinkedBytesList::open(relation_oid, SETTINGS_START, need_wal);
+pub fn save_settings(relation_oid: pg_sys::Oid, tantivy_settings: &IndexSettings) -> Result<()> {
+    let mut settings = LinkedBytesList::open(relation_oid, SETTINGS_START);
     if settings.is_empty() {
         let bytes = serde_json::to_vec(tantivy_settings)?;
         unsafe {
@@ -80,11 +71,10 @@ pub unsafe fn save_new_metas(
     new_meta: &IndexMeta,
     prev_meta: &IndexMeta,
     directory_entries: &mut FxHashMap<PathBuf, FileEntry>,
-    need_wal: NeedWal,
 ) -> Result<()> {
     let current_xid = pg_sys::GetCurrentTransactionId();
     let mut linked_list =
-        LinkedItemList::<SegmentMetaEntry>::open(relation_oid, SEGMENT_METAS_START, need_wal);
+        LinkedItemList::<SegmentMetaEntry>::open(relation_oid, SEGMENT_METAS_START);
 
     let incoming_segments = new_meta
         .segments
@@ -278,7 +268,7 @@ pub unsafe fn save_new_metas(
         .into_iter()
         .flatten()
         {
-            let mut file = LinkedBytesList::open(relation_oid, file_entry.staring_block, need_wal);
+            let mut file = LinkedBytesList::open(relation_oid, file_entry.staring_block);
             file.mark_deleted();
         }
     }
@@ -308,11 +298,7 @@ pub unsafe fn save_new_metas(
     }
     // chase down the linked lists for any existing deleted entries and mark them as deleted
     for deleted_entry in replaced_delete_entries {
-        let mut file = LinkedBytesList::open(
-            relation_oid,
-            deleted_entry.file_entry.staring_block,
-            need_wal,
-        );
+        let mut file = LinkedBytesList::open(relation_oid, deleted_entry.file_entry.staring_block);
         file.mark_deleted();
     }
 
@@ -328,8 +314,7 @@ pub unsafe fn load_metas(
     snapshot: pg_sys::Snapshot,
     solve_mvcc: MvccSatisfies,
 ) -> tantivy::Result<IndexMeta> {
-    let segment_metas =
-        LinkedItemList::<SegmentMetaEntry>::open(relation_oid, SEGMENT_METAS_START, false);
+    let segment_metas = LinkedItemList::<SegmentMetaEntry>::open(relation_oid, SEGMENT_METAS_START);
     let heap_oid = unsafe { pg_sys::IndexGetRelation(relation_oid, false) };
     let heap_relation = unsafe { pg_sys::RelationIdGetRelation(heap_oid) };
     let mut alive_segments = vec![];
@@ -372,8 +357,8 @@ pub unsafe fn load_metas(
 
     pg_sys::RelationClose(heap_relation);
 
-    let schema = LinkedBytesList::open(relation_oid, SCHEMA_START, false);
-    let settings = LinkedBytesList::open(relation_oid, SETTINGS_START, false);
+    let schema = LinkedBytesList::open(relation_oid, SCHEMA_START);
+    let settings = LinkedBytesList::open(relation_oid, SETTINGS_START);
     let deserialized_schema = serde_json::from_slice(&schema.read_all())?;
     let deserialized_settings = serde_json::from_slice(&settings.read_all())?;
 

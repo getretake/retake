@@ -57,7 +57,7 @@ pub extern "C" fn amvacuumcleanup(
         let index_oid = index_relation.oid();
         let nblocks =
             pg_sys::RelationGetNumberOfBlocksInFork(info.index, pg_sys::ForkNumber::MAIN_FORKNUM);
-        let mut bman = BufferManager::new(index_oid, true);
+        let mut bman = BufferManager::new(index_oid);
         let heap_oid = pg_sys::IndexGetRelation(index_oid, false);
         let heap_relation = pg_sys::RelationIdGetRelation(heap_oid);
 

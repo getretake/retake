@@ -1,6 +1,5 @@
 use crate::postgres::storage::block::{bm25_max_free_space, FileEntry};
 use crate::postgres::storage::LinkedBytesList;
-use crate::postgres::NeedWal;
 use pgrx::*;
 use std::io::{Result, Write};
 use std::path::{Path, PathBuf};
@@ -14,8 +13,8 @@ pub struct SegmentComponentWriter {
 }
 
 impl SegmentComponentWriter {
-    pub unsafe fn new(relation_oid: pg_sys::Oid, path: &Path, need_wal: NeedWal) -> Self {
-        let segment_component = LinkedBytesList::create(relation_oid, need_wal);
+    pub unsafe fn new(relation_oid: pg_sys::Oid, path: &Path) -> Self {
+        let segment_component = LinkedBytesList::create(relation_oid);
 
         Self {
             path: path.to_path_buf(),

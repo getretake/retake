@@ -176,10 +176,6 @@ impl BM25BufferCache {
     pub unsafe fn record_free_index_page(&self, blockno: pg_sys::BlockNumber) {
         pg_sys::RecordFreeIndexPage(self.indexrel.as_ptr(), blockno);
     }
-
-    pub unsafe fn start_xlog(&self) -> *mut pg_sys::GenericXLogState {
-        pg_sys::GenericXLogStart(self.indexrel.as_ptr())
-    }
 }
 
 impl Drop for BM25BufferCache {

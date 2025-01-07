@@ -16,7 +16,6 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 use crate::index::writer::index::SearchIndexWriter;
-use crate::index::WriterResources;
 use crate::postgres::storage::block::{
     MergeLockData, SegmentMetaEntry, CLEANUP_LOCK, MERGE_LOCK, SCHEMA_START, SEGMENT_METAS_START,
     SETTINGS_START,
@@ -198,9 +197,8 @@ fn is_bm25_index(indexrel: &PgRelation) -> bool {
 }
 
 unsafe fn create_metadata(index_relation: &PgRelation) {
-    let need_wal = WriterResources::CreateIndex.resources(index_relation).4;
     let relation_oid = index_relation.oid();
-    let mut bman = BufferManager::new(relation_oid, need_wal);
+    let mut bman = BufferManager::new(relation_oid);
 
     // Init merge lock buffer
     let mut merge_lock = bman.new_buffer();
@@ -215,9 +213,9 @@ unsafe fn create_metadata(index_relation: &PgRelation) {
     cleanup_lock.init_page();
 
     // initialize all the other required buffers
-    let schema = LinkedBytesList::create(relation_oid, need_wal);
-    let settings = LinkedBytesList::create(relation_oid, need_wal);
-    let segment_metas = LinkedItemList::<SegmentMetaEntry>::create(relation_oid, need_wal);
+    let schema = LinkedBytesList::create(relation_oid);
+    let settings = LinkedBytesList::create(relation_oid);
+    let segment_metas = LinkedItemList::<SegmentMetaEntry>::create(relation_oid);
 
     assert_eq!(schema.header_blockno, SCHEMA_START);
     assert_eq!(settings.header_blockno, SETTINGS_START);

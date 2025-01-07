@@ -50,7 +50,7 @@ pub extern "C" fn ambulkdelete(
         callback(&mut ctid, callback_state)
     };
 
-    let _merge_lock = unsafe { MergeLock::acquire_for_delete(index_relation.oid(), true) };
+    let _merge_lock = unsafe { MergeLock::acquire_for_delete(index_relation.oid()) };
     let mut writer = SearchIndexWriter::open(
         &index_relation,
         BlockDirectoryType::BulkDelete,

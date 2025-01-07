@@ -265,18 +265,14 @@ impl ChannelRequestHandler {
             }
             ChannelRequest::SegmentRead(range, handle, sender) => {
                 let reader = self.readers.entry(handle).or_insert_with(|| unsafe {
-                    SegmentComponentReader::new(
-                        self.relation_oid,
-                        handle,
-                        self.directory.need_wal(),
-                    )
+                    SegmentComponentReader::new(self.relation_oid, handle)
                 });
                 let data = reader.read_bytes(range)?;
                 sender.send(data)?;
             }
             ChannelRequest::SegmentWrite(path, data) => {
                 let writer = self.writers.entry(path.clone()).or_insert_with(|| unsafe {
-                    SegmentComponentWriter::new(self.relation_oid, &path, self.directory.need_wal())
+                    SegmentComponentWriter::new(self.relation_oid, &path)
                 });
                 writer.write_all(&data)?;
             }

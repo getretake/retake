@@ -31,7 +31,6 @@ use crate::index::mvcc::MVCCDirectory;
 use crate::index::{get_index_schema, setup_tokenizers, BlockDirectoryType, WriterResources};
 use crate::postgres::storage::block::{SegmentMetaEntry, SEGMENT_METAS_START};
 use crate::postgres::storage::LinkedItemList;
-use crate::postgres::NeedWal;
 use crate::{
     postgres::types::TantivyValueError,
     schema::{SearchDocument, SearchIndexSchema},
@@ -54,7 +53,6 @@ pub struct SearchIndexWriter {
     wants_merge: bool,
     insert_queue: Vec<UserOperation>,
     relation_oid: pg_sys::Oid,
-    need_wal: NeedWal,
 }
 
 impl SearchIndexWriter {
@@ -63,13 +61,12 @@ impl SearchIndexWriter {
         directory_type: BlockDirectoryType,
         resources: WriterResources,
     ) -> Result<Self> {
-        let (parallelism, memory_budget, wants_merge, merge_policy, need_wal) =
+        let (parallelism, memory_budget, wants_merge, merge_policy) =
             resources.resources(index_relation);
 
         let (req_sender, req_receiver) = crossbeam::channel::bounded(CHANNEL_QUEUE_LEN);
         let channel_dir = ChannelDirectory::new(req_sender);
-        let mut handler =
-            directory_type.channel_request_handler(index_relation, req_receiver, need_wal);
+        let mut handler = directory_type.channel_request_handler(index_relation, req_receiver);
 
         let mut index = {
             handler
@@ -102,19 +99,18 @@ impl SearchIndexWriter {
             wants_merge,
             ctid_field,
             insert_queue: Vec::with_capacity(MAX_INSERT_QUEUE_SIZE),
-            need_wal,
         })
     }
 
     pub fn create_index(index_relation: &PgRelation) -> Result<Self> {
         let schema = get_index_schema(index_relation)?;
-        let (parallelism, memory_budget, wants_merge, merge_policy, need_wal) =
+        let (parallelism, memory_budget, wants_merge, merge_policy) =
             WriterResources::CreateIndex.resources(index_relation);
 
         let (req_sender, req_receiver) = crossbeam::channel::bounded(CHANNEL_QUEUE_LEN);
         let channel_dir = ChannelDirectory::new(req_sender);
         let mut handler = ChannelRequestHandler::open(
-            MVCCDirectory::snapshot(index_relation.oid(), need_wal),
+            MVCCDirectory::snapshot(index_relation.oid()),
             index_relation.oid(),
             req_receiver,
         );
@@ -152,7 +148,6 @@ impl SearchIndexWriter {
             handler,
             wants_merge,
             insert_queue: Vec::with_capacity(MAX_INSERT_QUEUE_SIZE),
-            need_wal,
         })
     }
 
@@ -212,7 +207,7 @@ impl SearchIndexWriter {
     pub fn commit_inserts(self) -> Result<()> {
         let index_oid = self.relation_oid;
         let merge_lock = if self.wants_merge {
-            unsafe { MergeLock::acquire_for_merge(self.relation_oid, self.need_wal) }
+            unsafe { MergeLock::acquire_for_merge(self.relation_oid) }
         } else {
             None
         };
@@ -230,7 +225,7 @@ impl SearchIndexWriter {
         assert!(self.insert_queue.is_empty());
 
         let index_oid = self.relation_oid;
-        let merge_lock = unsafe { MergeLock::acquire_for_merge(self.relation_oid, self.need_wal) };
+        let merge_lock = unsafe { MergeLock::acquire_for_merge(self.relation_oid) };
         self.commit(merge_lock.is_some())?;
 
         if merge_lock.is_some() {
@@ -252,7 +247,7 @@ impl SearchIndexWriter {
 
 unsafe fn garbage_collect_metas(index_oid: pg_sys::Oid) -> Result<()> {
     let mut segment_metas =
-        LinkedItemList::<SegmentMetaEntry>::open(index_oid, SEGMENT_METAS_START, true);
+        LinkedItemList::<SegmentMetaEntry>::open(index_oid, SEGMENT_METAS_START);
     segment_metas.garbage_collect(pg_sys::GetAccessStrategy(
         pg_sys::BufferAccessStrategyType::BAS_VACUUM,
     ))

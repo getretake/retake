@@ -210,13 +210,13 @@ impl SearchIndexReader {
         // To prevent this, ambulkdelete acquires an exclusive cleanup lock. Readers must also acquire this lock (shared)
         // to prevent a reader from reading dead ctids right before ambulkdelete finishes.
         let cleanup_lock = if needs_cleanup_lock {
-            let bman = BufferManager::new(index_relation.oid(), false);
+            let bman = BufferManager::new(index_relation.oid());
             Some(bman.get_buffer(CLEANUP_LOCK))
         } else {
             None
         };
 
-        let directory = directory_type.directory(index_relation, false);
+        let directory = directory_type.directory(index_relation);
         let mut index = Index::open(directory)?;
         let schema = SearchIndexSchema::open(index.schema(), index_relation);
 
