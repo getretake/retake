@@ -83,6 +83,7 @@ jobs:
           RUST_BACKTRACE=1 cargo pgrx start pg${{ matrix.pg_version }}
           ~/.pgrx/${{ matrix.pg_version }}.*/pgrx-install/bin/createdb -p 288${{ matrix.pg_version }} -h localhost pg_search
 
+      # TODO: Add a [[report]] secction to the suites/ci.toml file to generate a report that we can display here
       - name: Run Stressgres Test Suite
         working-directory: stressgres/
         run: RUST_BACKTRACE=1 cargo run suites/ci.toml "host=localhost port=288${{ matrix.pg_version }} dbname=postgres" 600
