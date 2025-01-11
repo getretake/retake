@@ -90,7 +90,7 @@ pub enum SearchResults {
         usize,
         Searcher,
         FxHashMap<SegmentOrdinal, FFType>,
-        std::vec::IntoIter<(OrderedScore, DocAddress)>,
+        std::vec::IntoIter<(f32, DocAddress)>,
     ),
 
     TopNByField(
@@ -175,7 +175,7 @@ impl Iterator for SearchResults {
                     ctid: ctid_ff
                         .as_u64(doc_address.doc_id)
                         .expect("ctid should be present"),
-                    bm25: scored.score,
+                    bm25: scored,
                 };
                 Some((scored, doc_address))
             }
@@ -491,13 +491,7 @@ impl SearchIndexReader {
         sortdir: SortDirection,
         n: usize,
     ) -> SearchResults {
-        let collector =
-            TopDocs::with_limit(n).tweak_score(move |_segment_reader: &tantivy::SegmentReader| {
-                move |_doc: DocId, original_score: Score| OrderedScore {
-                    dir: sortdir,
-                    score: original_score,
-                }
-            });
+        let collector = TopDocs::with_limit(n);
         let top_docs = self.collect(query, collector, true);
         SearchResults::TopNByScore(
             top_docs.len(),
@@ -568,13 +562,7 @@ impl SearchIndexReader {
         sortdir: SortDirection,
         n: usize,
     ) -> SearchResults {
-        let collector =
-            TopDocs::with_limit(n).tweak_score(move |_segment_reader: &tantivy::SegmentReader| {
-                move |_doc: DocId, original_score: Score| OrderedScore {
-                    dir: sortdir,
-                    score: original_score,
-                }
-            });
+        let collector = TopDocs::with_limit(n);
         let query = self.query(query);
         let weight = query
             .weight(tantivy::query::EnableScoring::Enabled {
