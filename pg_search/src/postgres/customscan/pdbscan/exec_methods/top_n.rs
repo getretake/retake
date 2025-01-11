@@ -193,13 +193,13 @@ impl ExecMethod for TopNScanExecState {
                     .max(self.limit * factor)
                     .min(MAX_CHUNK_SIZE);
 
-                let results = self.query_more_results(state, Some(self.current_segment));
-                let mut results = self.search_reader.as_ref().unwrap().search_top_n(
-                    self.search_query_input.as_ref().unwrap(),
-                    self.sort_field.clone(),
-                    self.sort_direction.into(),
-                    self.chunk_size,
-                );
+                let mut results = self.query_more_results(state, Some(self.current_segment));
+                // let mut results = self.search_reader.as_ref().unwrap().search_top_n(
+                //     self.search_query_input.as_ref().unwrap(),
+                //     self.sort_field.clone(),
+                //     self.sort_direction.into(),
+                //     self.chunk_size,
+                // );
 
                 // fast forward and stop on the ctid we last found
                 for (scored, doc_address) in &mut results {
