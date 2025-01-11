@@ -295,9 +295,9 @@ impl<P: Into<*mut pg_sys::List> + Default> CustomPathBuilder<P> {
                 // if the limit is less than some arbitrarily large value
                 // use at most half the number of parallel workers as there are segments
                 // this generally seems to perform better than directly using `max_parallel_workers`
-                if limit < 1_000_000.0 {
-                    nworkers = (segment_count / 2).min(nworkers);
-                }
+                // if limit < 1_000_000.0 {
+                //     nworkers = (segment_count / 2).min(nworkers);
+                // }
             }
 
             // we will try to parallelize based on the number of index segments
