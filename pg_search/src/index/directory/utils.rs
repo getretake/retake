@@ -116,6 +116,28 @@ pub unsafe fn save_new_metas(
     modified_ids.retain(|id| new_files.contains_key(id));
 
     //
+    // process the deleted segments
+    //
+    // find the deleted segment entries and set their `xmax` to this transaction id
+    // and for each file in each deleted segment, locate its LinkedBytesList and .mark_deleted()
+    //
+    let deleted_entries = deleted_ids
+        .into_iter()
+        .map(|id| {
+            let (mut meta_entry, blockno, _) = linked_list
+                .lookup_ex(|entry| entry.segment_id == *id)
+                .unwrap_or_else(|e| {
+                    panic!("segment id `{id}` should be in the segment meta linked list: {e}")
+                });
+
+            meta_entry.xmax = pg_sys::GetCurrentTransactionId();
+            (meta_entry, blockno)
+        })
+        .collect::<Vec<_>>();
+
+    let merge_happened = !deleted_entries.is_empty();
+
+    //
     // process the new segments
     //
     // these are added to the linked list as new items
@@ -129,6 +151,7 @@ pub unsafe fn save_new_metas(
             let mut files = new_files.remove(id)?;
 
             let meta_entry = SegmentMetaEntry {
+                merge_happened,
                 segment_id: *id,
                 max_doc: created_segment.max_doc(),
                 xmin: pg_sys::GetCurrentTransactionId(),
@@ -191,26 +214,6 @@ pub unsafe fn save_new_metas(
             });
 
             Some((meta_entry, blockno))
-        })
-        .collect::<Vec<_>>();
-
-    //
-    // process the deleted segments
-    //
-    // find the deleted segment entries and set their `xmax` to this transaction id
-    // and for each file in each deleted segment, locate its LinkedBytesList and .mark_deleted()
-    //
-    let deleted_entries = deleted_ids
-        .into_iter()
-        .map(|id| {
-            let (mut meta_entry, blockno, _) = linked_list
-                .lookup_ex(|entry| entry.segment_id == *id)
-                .unwrap_or_else(|e| {
-                    panic!("segment id `{id}` should be in the segment meta linked list: {e}")
-                });
-
-            meta_entry.xmax = pg_sys::GetCurrentTransactionId();
-            (meta_entry, blockno)
         })
         .collect::<Vec<_>>();
 
@@ -304,7 +307,7 @@ pub unsafe fn save_new_metas(
     // add the new entries
     linked_list.add_items(created_entries, None)?;
 
-    if !deleted_entries.is_empty() {
+    if merge_happened {
         linked_list.garbage_collect(pg_sys::GetAccessStrategy(
             pg_sys::BufferAccessStrategyType::BAS_VACUUM,
         ))?;
@@ -324,40 +327,40 @@ pub unsafe fn load_metas(
     let heap_relation = unsafe { pg_sys::RelationIdGetRelation(heap_oid) };
     let mut alive_segments = vec![];
     let mut opstamp = None;
-    let mut blockno = segment_metas.get_start_blockno();
 
-    let bman = segment_metas.bman();
+    for entry in segment_metas.iter() {
+        let visible = match solve_mvcc {
+            MvccSatisfies::Vacuum => {
+                // we should be inside a vacuum, so any segment with an xid that is greater than
+                // or equal to the next xid is not visible to us
+                let before_latest_vacuum = pg_sys::TransactionIdPrecedes(
+                    entry.get_xmin(),
+                    pg_sys::ReadNextFullTransactionId().value as pg_sys::TransactionId,
+                );
 
-    while blockno != pg_sys::InvalidBlockNumber {
-        let buffer = bman.get_buffer(blockno);
-        let page = buffer.page();
-        let max_offset = page.max_offset_number();
-        let mut offsetno = pg_sys::FirstOffsetNumber;
-
-        while offsetno <= max_offset {
-            if let Some((entry, _)) = page.read_item::<SegmentMetaEntry>(offsetno) {
-                if (solve_mvcc == MvccSatisfies::Any && !entry.recyclable(snapshot, heap_relation))
-                    || (solve_mvcc == MvccSatisfies::Snapshot && entry.visible(snapshot))
-                {
-                    let inner_segment_meta = InnerSegmentMeta {
-                        max_doc: entry.max_doc,
-                        segment_id: entry.segment_id,
-                        deletes: entry.delete.map(|delete_entry| DeleteMeta {
-                            num_deleted_docs: delete_entry.num_deleted_docs,
-                            opstamp: 0, // hardcode zero as the entry's opstamp as it's not used
-                        }),
-                        include_temp_doc_store: Arc::new(AtomicBool::new(false)),
-                    };
-                    alive_segments.push(inner_segment_meta.track(inventory));
-
-                    opstamp = opstamp.max(Some(entry.opstamp()));
-                }
+                // the exception being if a segment is a merged segment, in which case it should be considered
+                // because it's comprised of segments that were visible before the vacuum
+                (before_latest_vacuum || entry.merge_happened)
+                // also don't bother considering recyclable segments
+                && !entry.recyclable(snapshot, heap_relation)
             }
+            MvccSatisfies::Snapshot => entry.visible(snapshot),
+        };
 
-            offsetno += 1;
+        if visible {
+            let inner_segment_meta = InnerSegmentMeta {
+                max_doc: entry.max_doc,
+                segment_id: entry.segment_id,
+                deletes: entry.delete.map(|delete_entry| DeleteMeta {
+                    num_deleted_docs: delete_entry.num_deleted_docs,
+                    opstamp: 0, // hardcode zero as the entry's opstamp as it's not used
+                }),
+                include_temp_doc_store: Arc::new(AtomicBool::new(false)),
+            };
+            alive_segments.push(inner_segment_meta.track(inventory));
+
+            opstamp = opstamp.max(Some(entry.opstamp()));
         }
-
-        blockno = page.next_blockno();
     }
 
     pg_sys::RelationClose(heap_relation);

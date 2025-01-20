@@ -15,10 +15,9 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use crate::postgres::storage::block::VACUUM_START;
 use crate::postgres::storage::buffer::BufferManager;
 use pgrx::*;
-
-use super::delete::BulkDeleteData;
 
 #[pg_guard]
 pub extern "C" fn amvacuumcleanup(
@@ -28,14 +27,6 @@ pub extern "C" fn amvacuumcleanup(
     let info = unsafe { PgBox::from_pg(info) };
     if info.analyze_only {
         return stats;
-    }
-
-    unsafe {
-        let delete_stats = stats as *mut BulkDeleteData;
-        if !delete_stats.is_null() {
-            let cleanup_lock = (*delete_stats).cleanup_lock;
-            pg_sys::UnlockReleaseBuffer(cleanup_lock);
-        }
     }
 
     // return all recyclable pages to the free space map
@@ -48,7 +39,7 @@ pub extern "C" fn amvacuumcleanup(
         let heap_oid = pg_sys::IndexGetRelation(index_oid, false);
         let heap_relation = pg_sys::RelationIdGetRelation(heap_oid);
 
-        for blockno in 0..nblocks {
+        for blockno in VACUUM_START..nblocks {
             check_for_interrupts!();
             let buffer = bman.get_buffer(blockno);
             let page = buffer.page();

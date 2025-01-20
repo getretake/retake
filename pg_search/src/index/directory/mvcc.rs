@@ -46,7 +46,7 @@ const MIN_NUM_SEGMENTS: usize = 2;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MvccSatisfies {
     Snapshot,
-    Any,
+    Vacuum,
 }
 
 /// Tantivy Directory trait implementation over block storage
@@ -80,7 +80,7 @@ impl MVCCDirectory {
         Self {
             relation_oid,
             merge_policy,
-            mvcc_style: MvccSatisfies::Any,
+            mvcc_style: MvccSatisfies::Vacuum,
             readers: Arc::new(Mutex::new(FxHashMap::default())),
             merge_lock: Default::default(),
         }
@@ -276,9 +276,9 @@ impl Directory for MVCCDirectory {
         }
 
         // try to acquire merge lock and do merge
-        if let Some(mut merge_lock) = unsafe { MergeLock::acquire_for_merge(self.relation_oid) } {
+        if let Some(merge_lock) = unsafe { MergeLock::acquire_for_merge(self.relation_oid) } {
             if matches!(&self.merge_policy, &AllowedMergePolicy::NPlusOne) {
-                let num_segments = unsafe { merge_lock.num_segments() };
+                let num_segments = merge_lock.num_segments();
                 let parallelism = std::thread::available_parallelism()
                     .expect("failed to get available_parallelism")
                     .get();

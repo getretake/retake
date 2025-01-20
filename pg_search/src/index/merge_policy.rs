@@ -1,5 +1,5 @@
 use crate::postgres::storage::block::{MergeLockData, MERGE_LOCK};
-use crate::postgres::storage::buffer::{BufferManager, BufferMut};
+use crate::postgres::storage::buffer::{BufferManager, PinnedBuffer};
 use pgrx::pg_sys;
 use tantivy::indexer::{MergeCandidate, MergePolicy};
 use tantivy::SegmentMeta;
@@ -54,7 +54,10 @@ impl MergePolicy for NPlusOneMergePolicy {
 
 /// Only one merge can happen at a time, so we need to lock the merge process
 #[derive(Debug)]
-pub struct MergeLock(BufferMut);
+pub struct MergeLock {
+    num_segments: u32,
+    _buffer: PinnedBuffer,
+}
 
 impl MergeLock {
     // This lock is acquired by inserts that attempt to merge segments
@@ -67,17 +70,29 @@ impl MergeLock {
 
         let mut bman = BufferManager::new(relation_oid);
 
-        if let Some(mut merge_lock) = bman.get_buffer_conditional(MERGE_LOCK) {
+        if let Some(mut merge_lock) = bman.get_buffer_for_cleanup_conditional(
+            MERGE_LOCK,
+            pg_sys::GetAccessStrategy(pg_sys::BufferAccessStrategyType::BAS_NORMAL),
+        ) {
             let mut page = merge_lock.page_mut();
             let metadata = page.contents_mut::<MergeLockData>();
             let last_merge = metadata.last_merge;
             let snapshot = pg_sys::GetActiveSnapshot();
-            let last_merge_visible = pg_sys::TransactionIdIsCurrentTransactionId(last_merge)
-                || !pg_sys::XidInMVCCSnapshot(last_merge, snapshot);
+            let last_merge_visible = {
+                // this is the first merge that's ever happened
+                !pg_sys::TransactionIdIsNormal(last_merge)
+                // the last merge was committed by the current transaction, so it's visible
+                || pg_sys::TransactionIdIsCurrentTransactionId(last_merge)
+                // the last merge is visible to the current transaction
+                || !pg_sys::XidInMVCCSnapshot(last_merge, snapshot)
+            };
 
             if last_merge_visible {
                 metadata.last_merge = pg_sys::GetCurrentTransactionId();
-                Some(MergeLock(merge_lock))
+                Some(MergeLock {
+                    num_segments: metadata.num_segments,
+                    _buffer: merge_lock.unlock(),
+                })
             } else {
                 None
             }
@@ -90,26 +105,22 @@ impl MergeLock {
     // We ask for an exclusive lock because ambulkdelete must delete all dead ctids
     pub unsafe fn acquire_for_delete(relation_oid: pg_sys::Oid) -> Self {
         let mut bman = BufferManager::new(relation_oid);
-        let merge_lock = bman.get_buffer_mut(MERGE_LOCK);
-        MergeLock(merge_lock)
-    }
-
-    pub unsafe fn num_segments(&mut self) -> u32 {
-        let mut page = self.0.page_mut();
+        let mut merge_lock = bman.get_buffer_for_cleanup(
+            MERGE_LOCK,
+            pg_sys::GetAccessStrategy(pg_sys::BufferAccessStrategyType::BAS_NORMAL),
+        );
+        let mut page = merge_lock.page_mut();
         let metadata = page.contents_mut::<MergeLockData>();
-        metadata.num_segments
-    }
-}
+        metadata.last_vacuum = pg_sys::ReadNextFullTransactionId().value as pg_sys::TransactionId;
 
-impl Drop for MergeLock {
-    fn drop(&mut self) {
-        unsafe {
-            if pg_sys::IsTransactionState() {
-                let mut page = self.0.page_mut();
-                let metadata = page.contents_mut::<MergeLockData>();
-                metadata.last_merge = pg_sys::GetCurrentTransactionId();
-            }
+        MergeLock {
+            num_segments: metadata.num_segments,
+            _buffer: merge_lock.unlock(),
         }
+    }
+
+    pub fn num_segments(&self) -> u32 {
+        self.num_segments
     }
 }
 

@@ -286,6 +286,60 @@ impl<T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry> LinkedItemList<
             pg_sys::GetCurrentTransactionId()
         )))
     }
+
+    pub fn iter(&self) -> LinkedItemListIter<T> {
+        LinkedItemListIter::new(self)
+    }
+}
+
+pub struct LinkedItemListIter<'a, T>
+where
+    T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry,
+{
+    inner: &'a LinkedItemList<T>,
+    blockno: pg_sys::BlockNumber,
+    offsetno: pg_sys::OffsetNumber,
+}
+
+impl<'a, T> LinkedItemListIter<'a, T>
+where
+    T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry,
+{
+    pub fn new(inner: &'a LinkedItemList<T>) -> Self {
+        Self {
+            inner,
+            blockno: inner.get_start_blockno(),
+            offsetno: pg_sys::FirstOffsetNumber,
+        }
+    }
+}
+
+impl<T> Iterator for LinkedItemListIter<'_, T>
+where
+    T: From<PgItem> + Into<PgItem> + Debug + Clone + MVCCEntry,
+{
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.blockno != pg_sys::InvalidBlockNumber {
+            let buffer = self.inner.bman.get_buffer(self.blockno);
+            let page = buffer.page();
+            let max_offset = page.max_offset_number();
+
+            while self.offsetno <= max_offset {
+                if let Some((deserialized, _)) = page.read_item::<T>(self.offsetno) {
+                    self.offsetno += 1;
+                    return Some(deserialized);
+                }
+                self.offsetno += 1;
+            }
+
+            self.blockno = page.next_blockno();
+            self.offsetno = pg_sys::FirstOffsetNumber;
+        }
+
+        None
+    }
 }
 
 #[cfg(any(test, feature = "pg_test"))]

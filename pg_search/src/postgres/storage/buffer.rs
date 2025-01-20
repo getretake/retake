@@ -66,7 +66,10 @@ pub struct BufferMut {
 impl Drop for BufferMut {
     fn drop(&mut self) {
         unsafe {
-            if pg_sys::IsTransactionState() && self.dirty {
+            if pg_sys::IsTransactionState()
+                && self.dirty
+                && self.inner.pg_buffer != pg_sys::InvalidBuffer as pg_sys::Buffer
+            {
                 pg_sys::MarkBufferDirty(self.inner.pg_buffer);
             }
         }
@@ -86,6 +89,20 @@ impl BufferMut {
             (*special).xmax = pg_sys::InvalidTransactionId;
         }
         page
+    }
+
+    pub fn unlock(mut self) -> PinnedBuffer {
+        unsafe {
+            let pg_buffer = self.inner.pg_buffer;
+            self.inner.pg_buffer = pg_sys::InvalidBuffer as pg_sys::Buffer;
+
+            // unlock this buffer and convert to a PinnedBuffer
+            if self.dirty {
+                pg_sys::MarkBufferDirty(pg_buffer);
+            }
+            pg_sys::LockBuffer(pg_buffer, pg_sys::BUFFER_LOCK_UNLOCK as _);
+            PinnedBuffer::new(pg_buffer)
+        }
     }
 
     #[allow(dead_code)]
@@ -115,6 +132,7 @@ impl BufferMut {
     }
 }
 
+#[derive(Debug)]
 pub struct PinnedBuffer {
     pg_buffer: pg_sys::Buffer,
 }
@@ -457,6 +475,7 @@ impl BufferManager {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_buffer_conditional(&mut self, blockno: pg_sys::BlockNumber) -> Option<BufferMut> {
         unsafe {
             let pg_buffer = self.bcache.get_buffer(blockno, None);
@@ -485,6 +504,27 @@ impl BufferManager {
             BufferMut {
                 dirty: false,
                 inner: Buffer::new(buffer),
+            }
+        }
+    }
+
+    pub fn get_buffer_for_cleanup_conditional(
+        &mut self,
+        blockno: pg_sys::BlockNumber,
+        strategy: pg_sys::BufferAccessStrategy,
+    ) -> Option<BufferMut> {
+        unsafe {
+            let buffer = self
+                .bcache
+                .get_buffer_with_strategy(blockno, strategy, None);
+            if pg_sys::ConditionalLockBufferForCleanup(buffer) {
+                Some(BufferMut {
+                    dirty: false,
+                    inner: Buffer::new(buffer),
+                })
+            } else {
+                pg_sys::ReleaseBuffer(buffer);
+                None
             }
         }
     }

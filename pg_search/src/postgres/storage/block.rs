@@ -31,6 +31,9 @@ pub const SCHEMA_START: pg_sys::BlockNumber = 2;
 pub const SETTINGS_START: pg_sys::BlockNumber = 4;
 pub const SEGMENT_METAS_START: pg_sys::BlockNumber = 6;
 
+// Blocks before this cutoff are not considered for being returned to the FSM
+pub const VACUUM_START: pg_sys::BlockNumber = 2;
+
 // ---------------------------------------------------------
 // BM25 page special data
 // ---------------------------------------------------------
@@ -46,11 +49,12 @@ pub struct BM25PageSpecialData {
 // Merge lock
 // ---------------------------------------------------------
 
-#[derive(Debug)]
+#[derive(Debug, Default, Copy, Clone)]
 #[repr(C, packed)]
 pub struct MergeLockData {
     pub last_merge: pg_sys::TransactionId,
     pub num_segments: u32,
+    pub last_vacuum: pg_sys::TransactionId,
 }
 
 // ---------------------------------------------------------
@@ -138,6 +142,7 @@ pub struct DeleteEntry {
 /// Metadata for tracking alive segments
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SegmentMetaEntry {
+    pub merge_happened: bool,
     pub segment_id: SegmentId,
     pub max_doc: u32,
     pub xmin: pg_sys::TransactionId,
